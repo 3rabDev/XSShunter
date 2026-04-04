@@ -29,7 +29,7 @@ def scan_url(url, payloads, args):
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     post_data = args.data if args.data else None
 
-    # حتى لو params dict فارغ لكن فيه query string (مثل ?query=)
+
     has_params = bool(params) or ('=' in parsed.query)
     
     if not has_params and not post_data:
