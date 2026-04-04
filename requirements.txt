@@ -1,0 +1,33 @@
+# Core libraries
+requests==2.31.0
+beautifulsoup4==4.12.2
+urllib3==2.1.0
+lxml==4.9.3
+
+# CLI & UI
+colorama==0.4.6
+pyfiglet==0.8.post1
+tqdm==4.66.1
+
+# Headless browser automation
+selenium==4.15.0
+webdriver-manager==4.0.1
+
+# Advanced HTTP & session management
+fake-useragent==1.4.0
+requests-toolbelt==1.0.0
+
+# Parsing & data handling
+cssutils==2.10.0
+jsbeautifier==1.14.9
+
+# Reporting
+json5==0.9.14
+tabulate==0.9.0
+
+# Optional: for DOM analysis with JS engine
+pyexecjs==1.5.1
+js2py==0.74
+
+# Optional: for advanced WAF detection
+cloudscraper==1.2.71
