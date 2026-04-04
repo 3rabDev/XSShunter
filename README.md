@@ -23,7 +23,7 @@ So here's mine.
 ## Install
 
 ```bash
-git clone https://github.com/i3rrb/XSShunter
+git clone https://github.com/3rabDev/XSShunter
 cd XSShunter
 pip install -r requirements.txt
 ```
@@ -82,7 +82,7 @@ python xssHunter.py -u "http://target.com" --crawl --dom --headless --waf -o rep
 
 **Test a parameter quickly:**
 ```bash
-python xssHunter.py -u "https://xss.haozi.me/#/0?query=test" --dom
+python xssHunter.py -u "https://example.com/search?query=" --dom
 ```
 
 **Authenticated scan (with cookie):**
@@ -92,7 +92,7 @@ python xssHunter.py -u "https://admin.target.com/dashboard" --cookie "PHPSESSID=
 
 **Save results as HTML (looks clean):**
 ```bash
-python xssHunter.py -u "http://testhtml5.vulnweb.com" --crawl -o report.html
+python xssHunter.py -u "http://testhtml5.com" --crawl -o report.html
 ```
 
 **Blind XSS (for stored / feedback forms):**
