@@ -27,14 +27,14 @@ from modules.scanner import scan_url
 from modules.crawler import crawl_site
 from modules.utils import load_payloads, save_report, color_print
 
-# Fix UTF-8 encoding on Windows for banner display
+
 if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 init(autoreset=True)
 
-# Configure logging
+
 logging.basicConfig(
     level=logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -52,7 +52,7 @@ BANNER = f"""
 ║   ╚═╝  ╚═╝╚══════╝╚══════╝    ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝  ╚═╝  ╚██████╔╝  ║
 ║                                                                                  ║
 ║                          Advanced XSS Exploitation Framework                     ║
-║                         v1.0 | @i3rrb | https://3rabdev.online                   ║
+║                         v1.5 | @i3rrb | https://3rabdev.online                   ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 {Style.RESET_ALL}
 """
