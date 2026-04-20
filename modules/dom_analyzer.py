@@ -19,9 +19,13 @@ from bs4 import BeautifulSoup
 import re
 import json
 import hashlib
+import logging
+from typing import Optional, Dict, List, Any
 from urllib.parse import urlparse, parse_qs, urljoin
 from collections import defaultdict
 import ast
+
+logger = logging.getLogger(__name__)
 
 class DOMAnalyzer:
     def __init__(self, session, use_headless=False):
@@ -51,7 +55,8 @@ class DOMAnalyzer:
                 self._dynamic_analysis(url)
             return self._generate_report()
         except Exception as e:
-            return None
+            logger.error(f"DOM analysis error for {url}: {e}")
+            return self._generate_report()
 
     def _check_csp(self, csp_header):
         self.csp = csp_header
@@ -147,7 +152,10 @@ class DOMAnalyzer:
                 elif isinstance(node, ast.Assign):
                     if isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add):
                         self._add_finding('ast_string_concat', 'String concatenation may lead to injection', ast.unparse(node)[:200], 'Medium')
-        except:
+        except SyntaxError:
+            logger.debug(f"Failed to parse code block for AST analysis")
+        except Exception as e:
+            logger.debug(f"AST analysis error: {e}")
             pass
 
     def _analyze_angular(self, soup):
@@ -275,8 +283,10 @@ class DOMAnalyzer:
             test_payload = '<img src=x onerror=this.setAttribute("data-xss","detected")>'
             if verify_xss(url + ('' if '?' in url else '?') + f'q={test_payload}', test_payload):
                 self._add_finding('dynamic_confirmed_xss', 'Headless browser confirmed XSS execution', test_payload, 'Critical')
-        except:
-            pass
+        except ImportError:
+            logger.debug("Headless module not available for dynamic analysis")
+        except Exception as e:
+            logger.debug(f"Dynamic analysis error: {e}")
 
     def _add_finding(self, finding_type, description, context, severity):
         finding = {

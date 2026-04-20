@@ -22,8 +22,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 import time
 import os
+import logging
 
-def verify_xss(url, payload, timeout=5):
+logger = logging.getLogger(__name__)
+
+def verify_xss(url: str, payload: str, timeout: int = 5) -> bool:
+    """Verify XSS payload using headless browser."""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
@@ -60,10 +64,15 @@ def verify_xss(url, payload, timeout=5):
         
         return False
         
-    except WebDriverException:
+    except WebDriverException as e:
+        logger.debug(f"WebDriver error: {e}")
         return False
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Verification error: {e}")
         return False
     finally:
         if driver:
-            driver.quit()
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.debug(f"Driver quit error: {e}")

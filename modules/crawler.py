@@ -19,6 +19,7 @@ import threading
 import queue
 import time
 import urllib.robotparser
+import logging
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, quote
 from collections import deque
 from bs4 import BeautifulSoup
@@ -28,13 +29,15 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.utils import get_session, random_delay, color_print
 
+logger = logging.getLogger(__name__)
+
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
     from webdriver_manager.chrome import ChromeDriverManager
     SELENIUM_OK = True
-except:
+except ImportError:
     SELENIUM_OK = False
 
 class SmartCrawler:
@@ -70,7 +73,8 @@ class SmartCrawler:
             self.rp.set_url(robots_url)
             self.rp.read()
             color_print(f"Robots.txt loaded from {robots_url}", 'info')
-        except:
+        except Exception as e:
+            logger.debug(f"Failed to load robots.txt: {e}")
             self.rp = None
 
     def _init_selenium(self):
@@ -89,6 +93,7 @@ class SmartCrawler:
                     self.driver.add_cookie({'name': name, 'value': value})
             color_print("JS rendering enabled", 'success')
         except Exception as e:
+            logger.error(f"Selenium initialization failed: {e}")
             color_print(f"Selenium failed: {e}", 'error')
             self.use_js = False
 
@@ -191,8 +196,8 @@ class SmartCrawler:
                     full = self._normalize_url(full)
                     if self._is_valid(full):
                         links.add(full)
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"HTML extraction error: {e}")
         return links
 
     def _extract_from_js(self, url, html):
@@ -215,8 +220,8 @@ class SmartCrawler:
                 full = self._normalize_url(full)
                 if self._is_valid(full):
                     links.add(full)
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"JS extraction error: {e}")
         return links
 
     def _fetch_page(self, url):
@@ -231,7 +236,8 @@ class SmartCrawler:
             if resp.status_code == 200:
                 return resp.text
             return None
-        except:
+        except Exception as e:
+            logger.debug(f"Failed to fetch {url}: {e}")
             return None
 
     def _fetch_js_page(self, url):
@@ -242,7 +248,8 @@ class SmartCrawler:
             time.sleep(1)
             html = self.driver.page_source
             return html
-        except:
+        except Exception as e:
+            logger.debug(f"Failed to fetch JS page {url}: {e}")
             return None
 
     def _crawl_page(self, url, depth):
@@ -284,12 +291,21 @@ class SmartCrawler:
                 futures.append(executor.submit(self._crawl_page, url, depth))
                 if len(futures) > self.threads * 2:
                     for future in as_completed(futures[:self.threads]):
-                        future.result()
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.debug(f"Crawl error: {e}")
                     futures = futures[self.threads:]
             for future in as_completed(futures):
-                future.result()
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.debug(f"Crawl error: {e}")
         if self.driver:
-            self.driver.quit()
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logger.debug(f"Driver cleanup error: {e}")
         color_print(f"Crawl finished. Found {len(self.all_urls)} unique URLs.", 'success')
         return list(self.all_urls)
 

@@ -20,16 +20,41 @@ import json
 import os
 import random
 import time
+import warnings
+from typing import Optional, Dict, List
 from fake_useragent import UserAgent
 from colorama import Fore, Style, init
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 init(autoreset=True)
-ua = UserAgent()
+# Suppress SSL warnings
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+
+try:
+    ua = UserAgent()
+except Exception:
+    ua = None
 
 def get_session(cookie=None, proxy=None, timeout=15, retries=3):
+    """Create a configured requests session with retry logic and custom headers."""
     session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST", "HEAD"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    user_agent = ua.random if ua else 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    
     session.headers.update({
-        'User-Agent': ua.random,
+        'User-Agent': user_agent,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
@@ -48,10 +73,12 @@ def get_session(cookie=None, proxy=None, timeout=15, retries=3):
     if proxy:
         session.proxies.update({'http': proxy, 'https': proxy})
     session.verify = False
+    session.timeout = timeout
     session.max_redirects = 10
     return session
 
 def load_payloads(file_path="core/payloads.txt", extra_path=None):
+    """Load XSS payloads from file or return defaults."""
     payloads = set()
     default_payloads = [
         "<script>alert('XSS')</script>",
@@ -76,23 +103,40 @@ def load_payloads(file_path="core/payloads.txt", extra_path=None):
         "<svg/onload=prompt(1)>",
         "<svg/onload=confirm(1)>"
     ]
+    # Check if a custom payload file was requested but doesn't exist
+    is_custom_file = file_path != "core/payloads.txt"
+    
     if os.path.exists(file_path):
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    payloads.add(line)
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        payloads.add(line)
+        except IOError as e:
+            color_print(f"Error reading payloads file {file_path}: {e}", "error")
+            if is_custom_file:
+                raise IOError(f"Failed to load custom payloads from {file_path}: {e}")
+    elif is_custom_file:
+        # Custom payload file was requested but doesn't exist
+        raise IOError(f"Custom payloads file not found: {file_path}")
+    
     if extra_path and os.path.exists(extra_path):
-        with open(extra_path, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    payloads.add(line)
+        try:
+            with open(extra_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        payloads.add(line)
+        except IOError as e:
+            color_print(f"Error reading extra payloads file {extra_path}: {e}", "warning")
+    
     if not payloads:
         payloads.update(default_payloads)
     return list(payloads)
 
 def save_report(findings, output_file, format='json'):
+    """Save findings report in specified format (json, html, or txt)."""
     os.makedirs(os.path.dirname(os.path.abspath(output_file)) if os.path.dirname(output_file) else '.', exist_ok=True)
     if format == 'json':
         report = {
@@ -143,6 +187,7 @@ tr:nth-child(even) {{ background: #2a2a2a; }}
         raise ValueError("Unsupported format")
 
 def detect_waf(response):
+    """Detect WAF based on response headers and content."""
     waf_signatures = {
         'Cloudflare': ['cloudflare', '__cfduid', 'cf-ray'],
         'ModSecurity': ['mod_security', 'modsecurity', 'NOYB'],
@@ -165,6 +210,7 @@ def detect_waf(response):
     return None
 
 def color_print(message, level="info", end='\n'):
+    """Print colored messages to console."""
     styles = {
         "info": Fore.CYAN,
         "success": Fore.GREEN,
@@ -186,15 +232,21 @@ def color_print(message, level="info", end='\n'):
     print(f"{color}{pre} {message}{Style.RESET_ALL}", end=end)
 
 def random_delay(min_sec=0.1, max_sec=0.5):
+    """Sleep for a random duration between min and max seconds."""
+    if min_sec < 0 or max_sec < 0 or min_sec > max_sec:
+        color_print(f"Invalid delay range: {min_sec}-{max_sec}", "warning")
+        return
     time.sleep(random.uniform(min_sec, max_sec))
 
 def encode_payload(payload, method='url'):
+    """Encode payload using specified method."""
     from urllib.parse import quote
+    import html
+    
     if method == 'url':
         return quote(payload)
     elif method == 'double_url':
         return quote(quote(payload))
     elif method == 'html_entity':
-        import html
         return html.escape(payload)
     return payload

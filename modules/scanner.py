@@ -18,17 +18,25 @@
 import urllib.parse
 import re
 import concurrent.futures
+import logging
 from colorama import Fore
 from modules.utils import get_session, detect_waf
 from modules.dom_analyzer import analyze_dom
 
+logger = logging.getLogger(__name__)
+
 def scan_url(url, payloads, args):
+    """Scan a URL for XSS vulnerabilities using provided payloads."""
     findings = []
-    session = get_session(args.cookie)
+    try:
+        session = get_session(args.cookie)
+    except Exception as e:
+        print(f"{Fore.RED}[-] Failed to create session: {str(e)[:80]}")
+        return findings
+        
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-    post_data = args.data if args.data else None
-
+    post_data = args.data if hasattr(args, 'data') and args.data else None
 
     has_params = bool(params) or ('=' in parsed.query)
     
@@ -38,19 +46,22 @@ def scan_url(url, payloads, args):
 
     print(f"{Fore.BLUE}[*] Testing {url} with {len(payloads)} payloads")
 
-    if args.waf:
+    if hasattr(args, 'waf') and args.waf:
         try:
             resp = session.get(url, timeout=10)
             waf = detect_waf(resp)
             if waf:
                 print(f"{Fore.RED}[!] WAF detected: {waf}")
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"WAF detection failed: {e}")
 
-    if args.dom:
-        dom_result = analyze_dom(url, session)
-        if dom_result:
-            print(f"{Fore.GREEN}[+] DOM XSS potential: {len(dom_result)} sinks")
+    if hasattr(args, 'dom') and args.dom:
+        try:
+            dom_result = analyze_dom(url, session)
+            if dom_result:
+                print(f"{Fore.GREEN}[+] DOM XSS potential: {len(dom_result.get('findings', []))} findings")
+        except Exception as e:
+            logger.debug(f"DOM analysis failed: {e}")
 
     def test_payload(param, payload, test_url=None, post_data_dict=None):
         nonlocal findings
@@ -63,6 +74,8 @@ def scan_url(url, payloads, args):
                 response_text = response.text
                 request_url = url
             else:
+                if not test_url:
+                    return
                 response = session.get(test_url, timeout=10)
                 response_text = response.text
                 request_url = test_url
@@ -87,16 +100,19 @@ def scan_url(url, payloads, args):
             print(f"{Fore.RED}[!] XSS Found! {url} - Parameter: {param} [{context}]")
             print(f"{Fore.YELLOW}    Payload: {payload[:80]}")
 
-            if args.headless:
-                from modules.headless import verify_xss
-                if verify_xss(request_url, payload):
-                    print(f"{Fore.GREEN}[✓] Verified with headless browser")
+            if hasattr(args, 'headless') and args.headless:
+                try:
+                    from modules.headless import verify_xss
+                    if verify_xss(request_url, payload):
+                        print(f"{Fore.GREEN}[✓] Verified with headless browser")
+                except Exception as e:
+                    logger.debug(f"Headless verification failed: {e}")
 
-            if args.blind:
+            if hasattr(args, 'blind') and args.blind:
                 print(f"{Fore.CYAN}[*] Blind XSS payload sent (check callback)")
 
         except Exception as e:
-            print(f"{Fore.RED}[-] Error on {param}: {str(e)[:50]}")
+            logger.debug(f"Error testing payload on {param}: {str(e)[:50]}")
 
     def detect_context(text, payload):
         escaped = re.escape(payload)
@@ -111,14 +127,18 @@ def scan_url(url, payloads, args):
         else:
             return 'plain text'
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads if hasattr(args, 'threads') else 10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(args, 'threads', 10)) as executor:
         futures = []
         if post_data:
             try:
                 import json
                 post_dict = json.loads(post_data)
-            except:
-                post_dict = dict(x.split('=',1) for x in post_data.split('&') if '=' in x)
+            except (json.JSONDecodeError, ValueError):
+                try:
+                    post_dict = dict(x.split('=', 1) for x in post_data.split('&') if '=' in x)
+                except Exception as e:
+                    logger.error(f"Failed to parse POST data: {e}")
+                    return findings
             for param in post_dict.keys():
                 for payload in payloads:
                     futures.append(executor.submit(test_payload, param, payload, None, post_dict))
@@ -135,6 +155,9 @@ def scan_url(url, payloads, args):
                     futures.append(executor.submit(test_payload, param, payload, test_url, None))
 
         for future in concurrent.futures.as_completed(futures):
-            future.result()
+            try:
+                future.result()
+            except Exception as e:
+                logger.debug(f"Executor error: {e}")
 
     return findings
