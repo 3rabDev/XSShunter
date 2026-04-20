@@ -28,7 +28,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 init(autoreset=True)
-
+# Suppress SSL warnings
 warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 try:
@@ -40,7 +40,7 @@ def get_session(cookie=None, proxy=None, timeout=15, retries=3):
     """Create a configured requests session with retry logic and custom headers."""
     session = requests.Session()
     
-
+    # Configure retry strategy
     retry_strategy = Retry(
         total=retries,
         backoff_factor=0.5,
@@ -103,7 +103,7 @@ def load_payloads(file_path="core/payloads.txt", extra_path=None):
         "<svg/onload=prompt(1)>",
         "<svg/onload=confirm(1)>"
     ]
- 
+    # Check if a custom payload file was requested but doesn't exist
     is_custom_file = file_path != "core/payloads.txt"
     
     if os.path.exists(file_path):
@@ -118,7 +118,7 @@ def load_payloads(file_path="core/payloads.txt", extra_path=None):
             if is_custom_file:
                 raise IOError(f"Failed to load custom payloads from {file_path}: {e}")
     elif is_custom_file:
-      
+        # Custom payload file was requested but doesn't exist
         raise IOError(f"Custom payloads file not found: {file_path}")
     
     if extra_path and os.path.exists(extra_path):
