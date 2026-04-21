@@ -1,26 +1,51 @@
-# 🕷️ XSShunter
+# XSShunter
 
-**XSS scanner that actually works.**
+XSShunter is a Python-based XSS scanning utility focused on practical reflected XSS testing, lightweight DOM inspection, basic crawling, and optional headless verification.
 
-Not another python script that spams `<script>alert(1)</script>` and calls it a day.
+The current codebase is centered around:
+- Query-parameter scanning with custom payloads
+- POST body testing with `--data`
+- Simple same-domain crawling
+- Basic DOM sink/source discovery
+- Optional Selenium-based verification
+- JSON, HTML, and TXT reporting
 
-I built this because most open source XSS tools are garbage. They either:
-- flood your terminal with false positives
-- break after 2 minutes
-- can't handle modern shit like Angular, Vue, or React
+## Current Version
 
-So here's mine.
+`v1.5`
 
-## What it does
+## Features
 
-- Crawls like a real browser (respects robots.txt, depth limits, same‑domain)
-- Injects payloads where they actually matter
-- Finds reflected, DOM‑based, and blind XSS
-- Uses headless Chrome to verify (no more "maybe" alerts)
-- Detects WAFs (Cloudflare, ModSecurity, etc) and tries to bypass
-- Multi‑threaded so you don't wait all day
+- Scan a single URL with query parameters using `-u`
+- Scan multiple targets from a file using `-f`
+- Crawl a target and scan discovered URLs with `--crawl`
+- Test POST parameters using `--data`
+- Add cookies, headers, proxy, timeout, delay, and custom user-agent
+- Load custom payloads from a file
+- Run lightweight DOM analysis with `--dom`
+- Attempt headless verification with `--headless`
+- Save results as `json`, `html`, or `txt`
+- Reduce console noise with `--quiet`
 
-## Install
+## What The Tool Actually Detects Right Now
+
+- Reflected XSS when a payload is returned unescaped in the response body
+- POST-based reflected behavior when payloads are injected through `--data`
+- DOM-related findings such as:
+  - inline event handlers
+  - common DOM source-to-sink patterns
+  - common framework sinks like `dangerouslySetInnerHTML`, `v-html`, `ng-bind-html`, and jQuery `.html(...)`
+  - form input surfaces
+
+## Current Limitations
+
+- `--blind` is currently only a mode flag and does not include a callback collector/backend
+- `--waf` performs basic detection only; it does not implement a real bypass engine
+- The crawler is intentionally lightweight and does not execute client-side JavaScript for discovery
+- `--headless` depends on a working local Chrome/Selenium setup
+- DOM analysis is heuristic-based and should be treated as triage, not proof of exploitation
+
+## Installation
 
 ```bash
 git clone https://github.com/3rabDev/XSShunter
@@ -28,111 +53,150 @@ cd XSShunter
 pip install -r requirements.txt
 ```
 
-You also need Chrome + chromedriver if you want `--headless`.  
-Or just skip that flag if you don't care.
+If you want `--headless`, make sure Chrome and a compatible Selenium browser setup are available on the machine.
 
-## Quick usage
+## Usage
 
-Scan one URL:
-
-```bash
-python xssHunter.py -u "http://testphp.vulnweb.com/listproducts.php?cat=1"
-```
-
-Crawl the whole site:
+Show help:
 
 ```bash
-python xssHunter.py -u "http://testphp.vulnweb.com" --crawl --depth 2
+python xssHunter.py -h
 ```
 
-Full power (DOM + headless + WAF bypass):
+Show version:
 
 ```bash
-python xssHunter.py -u "http://target.com" --crawl --dom --headless --waf -o report.html
+python xssHunter.py --version
 ```
 
-## All options (the boring part)
+Scan a single URL:
 
-| Flag | What it does |
-|||
-| `-u` | single URL |
-| `-f` | file with list of URLs |
-| `--crawl` | enable crawler |
-| `--depth` | max crawl depth (default 3) |
-| `-t` | threads (default 20) |
-| `--cookie` | set cookie |
-| `--header` | custom header (can be used multiple times) |
-| `--data` | POST data (JSON or key=value) |
-| `--blind` | blind XSS mode |
-| `--dom` | deep DOM analysis (Angular, Vue, React, AST) |
-| `--headless` | verify with real browser |
-| `--waf` | detect and try to bypass WAF |
-| `-p` | custom payloads file |
-| `--timeout` | request timeout in sec (default 15) |
-| `--delay` | delay between requests (default 0.1) |
-| `-o` | output file (.json, .html, .txt) |
-| `-v` | verbose |
-| `--quiet` | only show findings |
-| `--no-color` | disable colors |
-| `--proxy` | e.g. `http://127.0.0.1:8080` |
-| `--user-agent` | custom UA |
-| `--version` | show version |
-
-## Examples you'll actually use
-
-**Test a parameter quickly:**
 ```bash
-python xssHunter.py -u "https://example.com/search?query=" --dom
+python xssHunter.py -u "https://example.com/search?q=test"
 ```
 
-**Authenticated scan (with cookie):**
+Scan using a custom payload file:
+
 ```bash
-python xssHunter.py -u "https://admin.target.com/dashboard" --cookie "PHPSESSID=abc123" --header "X-Custom: 1"
+python xssHunter.py -u "https://example.com/search?q=test" -p payloads.txt
 ```
 
-**Save results as HTML (looks clean):**
+Scan multiple targets from a file:
+
 ```bash
-python xssHunter.py -u "http://testhtml5.com" --crawl -o report.html
+python xssHunter.py -f targets.txt
 ```
 
-**Blind XSS (for stored / feedback forms):**
+Crawl and scan discovered URLs:
+
 ```bash
-python xssHunter.py -u "https://feedback.site.com" --blind
+python xssHunter.py -u "https://example.com" --crawl --depth 2
 ```
 
-**Quiet + file output (for automation):**
+Test POST data:
+
+```bash
+python xssHunter.py -u "https://example.com/contact" --data "name=test&message=hello"
+```
+
+Run DOM inspection:
+
+```bash
+python xssHunter.py -u "https://example.com/search?q=test" --dom
+```
+
+Run headless verification:
+
+```bash
+python xssHunter.py -u "https://example.com/search?q=test" --headless
+```
+
+Authenticated/custom-header scan:
+
+```bash
+python xssHunter.py -u "https://example.com/dashboard?q=test" --cookie "session=abc123" --header "X-Test: 1"
+```
+
+Use a proxy:
+
+```bash
+python xssHunter.py -u "https://example.com/search?q=test" --proxy "http://127.0.0.1:8080"
+```
+
+Save a report:
+
+```bash
+python xssHunter.py -u "https://example.com/search?q=test" -o report.json
+python xssHunter.py -u "https://example.com/search?q=test" -o report.html
+python xssHunter.py -u "https://example.com/search?q=test" -o report.txt
+```
+
+Quiet mode:
+
 ```bash
 python xssHunter.py -f targets.txt --quiet -o results.json
 ```
 
-## What makes it not terrible
+## Command-Line Options
 
-- **No blind payload spam** - it checks reflection context first.
-- **Understands frontend frameworks** - looks for `ng-bind-html`, `v-html`, `dangerouslySetInnerHTML`, jQuery sinks.
-- **AST parsing** - detects `eval`, `setTimeout`, dynamic sinks in JS code.
-- **Headless verification** - actually opens Chrome to confirm XSS execution.
-- **WAF detection** - knows if Cloudflare or ModSecurity is blocking you.
+| Flag | Description |
+| --- | --- |
+| `-u`, `--url` | Single target URL |
+| `-f`, `--file` | File containing target URLs |
+| `--crawl` | Enable crawler mode |
+| `--depth` | Crawl depth, clamped between `1` and `5` |
+| `--same-domain` | Keep crawling on the same domain |
+| `-t`, `--threads` | Number of worker threads |
+| `--cookie` | Cookie string such as `name=value; name2=value2` |
+| `--header` | Custom header, can be used more than once |
+| `--data` | POST data as JSON or `key=value&...` |
+| `--blind` | Enable blind XSS mode flag |
+| `--dom` | Run DOM analysis |
+| `--headless` | Verify findings using Selenium |
+| `--waf` | Run basic WAF detection |
+| `-p`, `--payloads` | Custom payload file |
+| `--timeout` | Request timeout in seconds |
+| `-o`, `--output` | Output report path |
+| `-v`, `--verbose` | Enable verbose logging |
+| `--no-color` | Disable colored output |
+| `--quiet` | Suppress non-finding output |
+| `--proxy` | Proxy URL |
+| `--delay` | Delay between requests |
+| `--user-agent` | Custom User-Agent |
+| `--version` | Print version and exit |
 
-## Known issues (because nothing is perfect)
+## Output Formats
 
-- `--headless` sometimes fails on sites with anti‑bot detection. Use without if that happens.
-- Crawler might miss some JS‑generated links (working on it).
-- WAF bypass is basic - don't expect miracles against enterprise Fortinet.
+The tool supports:
+- `json`
+- `html`
+- `txt`
 
-## Contributing
+If the output extension is unknown, it falls back to JSON.
 
-Found a bug? Have a better payload? Open an issue or PR.
+## Project Structure
 
-I'm not actively maintaining 24/7, but I'll check every few days.
+```text
+XSShunter/
+├── xssHunter.py
+├── core/
+│   └── payloads.txt
+├── modules/
+│   ├── crawler.py
+│   ├── dom_analyzer.py
+│   ├── headless.py
+│   ├── scanner.py
+│   └── utils.py
+└── requirements.txt
+```
+
+## Notes
+
+- Targets without query parameters and without `--data` will be skipped by the scanner
+- The crawler only follows HTTP/HTTPS pages and ignores common static asset extensions
+- Report generation works even when no findings are discovered
+- Verbose mode is mainly useful for debugging scanner/runtime issues
 
 ## License
 
-GPL‑3.0 - free, but if you make something better, share it back.
-
-## Author
-
-**@i3rrb**  
-[3rabdev.online](https://3rabdev.online)  
-Just a guy who got tired of shitty XSS tools.
-*"If it reflects, we catch it."*
-
+GPL-3.0

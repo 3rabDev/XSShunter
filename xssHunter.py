@@ -1,44 +1,26 @@
 #!/usr/bin/env python3
-# XSShunter - Advanced XSS Exploitation Framework
-# Copyright (C) 2026  3rabDev
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import argparse
-import sys
-import json
-import os
-import time
 import logging
-from colorama import init, Fore, Style
-from pyfiglet import figlet_format
-from modules.scanner import scan_url
-from modules.crawler import crawl_site
-from modules.utils import load_payloads, save_report, color_print
+import os
+import sys
+import time
 
-# Fix UTF-8 encoding on Windows for banner display
-if sys.platform == 'win32':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+from colorama import Fore, Style, init
+
+from modules.crawler import crawl_site
+from modules.scanner import scan_url
+from modules.utils import color_print, load_payloads, read_targets_from_file, save_report
 
 init(autoreset=True)
 
-# Configure logging
 logging.basicConfig(
     level=logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+logging.getLogger("urllib3").setLevel(logging.ERROR)
+
+VERSION = "1.5"
 
 BANNER = f"""
 {Fore.RED}
@@ -52,28 +34,29 @@ BANNER = f"""
 ║   ╚═╝  ╚═╝╚══════╝╚══════╝    ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝  ╚═╝  ╚██████╔╝  ║
 ║                                                                                  ║
 ║                          Advanced XSS Exploitation Framework                     ║
-║                         v1.0 | @i3rrb | https://3rabdev.online                   ║
+║                         v{VERSION} | @i3rrb | https://3rabdev.online                 ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 {Style.RESET_ALL}
 """
+
 
 def create_arg_parser():
     parser = argparse.ArgumentParser(
         description="XSShunter - Next-Generation XSS Discovery Engine",
         epilog="Example: python xssHunter.py -u http://test.com --crawl --dom --headless -o report.json",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    target_group = parser.add_argument_group('Target Options')
+    target_group = parser.add_argument_group("Target Options")
     target_group.add_argument("-u", "--url", help="Single target URL")
     target_group.add_argument("-f", "--file", help="File containing list of URLs (one per line)")
     target_group.add_argument("--crawl", action="store_true", help="Enable intelligent crawling mode")
-    target_group.add_argument("--depth", type=int, default=3, help="Crawling depth (default: 3, max: 5)")
+    target_group.add_argument("--depth", type=int, default=2, help="Crawling depth (default: 2, max: 5)")
     target_group.add_argument("--same-domain", action="store_true", default=True, help="Stay on same domain during crawl")
 
-    scan_group = parser.add_argument_group('Scan Options')
-    scan_group.add_argument("-t", "--threads", type=int, default=20, help="Number of threads (default: 20)")
-    scan_group.add_argument("--cookie", help="Custom Cookie header (format: 'name=value' or JSON)")
-    scan_group.add_argument("--header", action='append', help="Custom headers (can be used multiple times)")
+    scan_group = parser.add_argument_group("Scan Options")
+    scan_group.add_argument("-t", "--threads", type=int, default=10, help="Number of threads (default: 10)")
+    scan_group.add_argument("--cookie", help="Custom Cookie header (format: 'name=value; name2=value2')")
+    scan_group.add_argument("--header", action="append", help="Custom headers (can be used multiple times)")
     scan_group.add_argument("--data", help="POST data for form submission (JSON or key=value&...)")
     scan_group.add_argument("--blind", action="store_true", help="Enable Blind XSS detection with callback")
     scan_group.add_argument("--dom", action="store_true", help="Enable deep DOM analysis")
@@ -82,195 +65,157 @@ def create_arg_parser():
     scan_group.add_argument("-p", "--payloads", help="Custom payloads file path")
     scan_group.add_argument("--timeout", type=int, default=15, help="Request timeout in seconds (default: 15)")
 
-    output_group = parser.add_argument_group('Output Options')
+    output_group = parser.add_argument_group("Output Options")
     output_group.add_argument("-o", "--output", help="Save report to file (supports .json, .html, .txt)")
     output_group.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
     output_group.add_argument("--no-color", action="store_true", help="Disable colored output")
     output_group.add_argument("--quiet", action="store_true", help="Suppress all output except findings")
 
-    misc_group = parser.add_argument_group('Misc Options')
+    misc_group = parser.add_argument_group("Misc Options")
     misc_group.add_argument("--proxy", help="Proxy URL (e.g., http://127.0.0.1:8080)")
     misc_group.add_argument("--delay", type=float, default=0.1, help="Delay between requests (default: 0.1)")
     misc_group.add_argument("--user-agent", help="Custom User-Agent string")
     misc_group.add_argument("--version", action="store_true", help="Show version and exit")
     return parser
-    scan_group.add_argument("--blind", action="store_true", help="Enable Blind XSS detection with callback")
-    scan_group.add_argument("--dom", action="store_true", help="Enable deep DOM analysis")
-    scan_group.add_argument("--headless", action="store_true", help="Verify with headless browser")
-    scan_group.add_argument("--waf", action="store_true", help="Detect and attempt WAF bypass")
-    scan_group.add_argument("-p", "--payloads", help="Custom payloads file path")
-    scan_group.add_argument("--timeout", type=int, default=15, help="Request timeout in seconds (default: 15)")
 
-    output_group = parser.add_argument_group('Output Options')
-    output_group.add_argument("-o", "--output", help="Save report to file (supports .json, .html, .txt)")
-    output_group.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
-    output_group.add_argument("--no-color", action="store_true", help="Disable colored output")
-    output_group.add_argument("--quiet", action="store_true", help="Suppress all output except findings")
-
-    misc_group = parser.add_argument_group('Misc Options')
-    misc_group.add_argument("--proxy", help="Proxy URL (e.g., http://127.0.0.1:8080)")
-    misc_group.add_argument("--delay", type=float, default=0.1, help="Delay between requests (default: 0.1)")
-    misc_group.add_argument("--user-agent", help="Custom User-Agent string")
-    misc_group.add_argument("--version", action="store_true", help="Show version and exit")
-    return parser
 
 def validate_args(args):
     if args.version:
-        print(f"XSShunter v1.5 | @i3rrb | https://3rabdev.online")
-        sys.exit(0)
+        print(f"XSShunter v{VERSION} | @i3rrb | https://3rabdev.online")
+        raise SystemExit(0)
     if not args.url and not args.file:
         color_print("No target specified. Use -u or -f.", "error")
-        sys.exit(1)
-    if args.crawl and args.depth > 5:
-        color_print("Max depth is 5, reducing to 5", "warning")
-        args.depth = 5
-    if args.threads < 1 or args.threads > 100:
-        color_print("Threads must be between 1 and 100, using 20", "warning")
-        args.threads = 20
-    if args.timeout < 1:
-        color_print("Timeout must be >= 1 second, using 15", "warning")
-        args.timeout = 15
+        raise SystemExit(1)
+    args.depth = max(1, min(args.depth, 5))
+    args.threads = max(1, min(args.threads, 100))
+    args.timeout = max(1, args.timeout)
+    args.delay = max(0.0, args.delay)
     return args
+
 
 def process_headers(args):
     headers = {}
-    if args.cookie:
-        headers['Cookie'] = args.cookie
     if args.user_agent:
-        headers['User-Agent'] = args.user_agent
-    if args.header:
-        for h in args.header:
-            if ':' in h:
-                key, val = h.split(':', 1)
-                headers[key.strip()] = val.strip()
+        headers["User-Agent"] = args.user_agent
+    for header in args.header or []:
+        if ":" not in header:
+            continue
+        key, value = header.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            headers[key] = value
     return headers
 
-def main():
-    if not sys.flags.interactive:
-        try:
-            import warnings
-            warnings.filterwarnings("ignore")
-        except:
-            pass
 
-    if not any(arg in sys.argv for arg in ['--no-color', '-h', '--help']):
-        print(BANNER)
+def iter_targets(args):
+    if args.file:
+        color_print(f"Loading targets from {args.file}", "info", quiet=args.quiet)
+        urls = read_targets_from_file(args.file)
+        color_print(f"Loaded {len(urls)} targets", "success", quiet=args.quiet)
+        return urls
+    if args.crawl and args.url:
+        urls = crawl_site(
+            start_url=args.url,
+            threads=args.threads,
+            depth=args.depth,
+            same_domain=args.same_domain,
+            delay=args.delay,
+            headers=args.headers,
+            cookie=args.cookie,
+            timeout=args.timeout,
+        )
+        if args.url not in urls:
+            urls.insert(0, args.url)
+        color_print(f"Crawled {len(urls)} unique URLs", "success", quiet=args.quiet)
+        return urls
+    return [args.url]
+
+
+def save_if_requested(args, findings):
+    if not args.output:
+        return
+    fmt = os.path.splitext(args.output)[1].lower().lstrip(".") or "json"
+    if fmt not in {"json", "html", "txt"}:
+        fmt = "json"
+    save_report(findings, args.output, fmt)
+    color_print(f"Report saved to {args.output} ({fmt})", "success", quiet=args.quiet)
+
+
+def main():
+    if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+        import io
+
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
     parser = create_arg_parser()
-    args = parser.parse_args()
-    args = validate_args(args)
+    args = validate_args(parser.parse_args())
 
     if args.no_color:
         init(autoreset=True, strip=True)
 
-    headers = process_headers(args)
-
-    try:
-        payloads = load_payloads(args.payloads if args.payloads else "core/payloads.txt")
-    except IOError as e:
-        color_print(f"Failed to load payloads: {e}", "error")
-        sys.exit(1)
+    if not any(flag in sys.argv for flag in ["-h", "--help", "--version"]) and not args.quiet:
+        print(BANNER)
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-        color_print(f"Loaded {len(payloads)} XSS payloads", "info")
 
-    findings = []
-    start_time = time.time()
-    args.headers = headers
+    args.headers = process_headers(args)
 
     try:
-        if args.crawl and args.url:
-            color_print(f"Starting intelligent crawl on {args.url} (depth={args.depth}, threads={args.threads})", "header")
-            try:
-                urls = crawl_site(
-                    start_url=args.url,
-                    threads=args.threads,
-                    depth=args.depth,
-                    same_domain=args.same_domain,
-                    delay=args.delay
-                )
-            except Exception as e:
-                color_print(f"Crawling failed: {str(e)}", "error")
-                if args.verbose:
-                    import traceback
-                    traceback.print_exc()
-                urls = [args.url]
-            
-            color_print(f"Crawled {len(urls)} unique URLs", "success")
-            for idx, url in enumerate(urls, 1):
-                if not args.quiet:
-                    color_print(f"Scanning [{idx}/{len(urls)}]: {url}", "info")
-                try:
-                    result = scan_url(url, payloads, args)
-                    if result:
-                        findings.extend(result)
-                except Exception as e:
-                    color_print(f"Scan error on {url}: {str(e)[:50]}", "warning")
+        payloads = load_payloads(args.payloads or "core/payloads.txt")
+    except OSError as exc:
+        color_print(f"Failed to load payloads: {exc}", "error")
+        raise SystemExit(1)
 
-        elif args.file:
-            color_print(f"Loading targets from {args.file}", "info")
-            if not os.path.exists(args.file):
-                color_print(f"File not found: {args.file}", "error")
-                sys.exit(1)
-            try:
-                with open(args.file, 'r', encoding='utf-8', errors='ignore') as f:
-                    urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-            except IOError as e:
-                color_print(f"Failed to read file {args.file}: {e}", "error")
-                sys.exit(1)
-                
-            color_print(f"Loaded {len(urls)} targets", "success")
-            for idx, url in enumerate(urls, 1):
-                if not args.quiet:
-                    color_print(f"Scanning [{idx}/{len(urls)}]: {url}", "info")
-                try:
-                    result = scan_url(url, payloads, args)
-                    if result:
-                        findings.extend(result)
-                except Exception as e:
-                    color_print(f"Scan error on {url}: {str(e)[:50]}", "warning")
+    color_print(f"Loaded {len(payloads)} payloads", "info", quiet=not args.verbose)
 
-        elif args.url:
-            try:
-                result = scan_url(args.url, payloads, args)
-                if result:
-                    findings.extend(result)
-            except Exception as e:
-                color_print(f"Scan error: {str(e)}", "error")
-                if args.verbose:
-                    import traceback
-                    traceback.print_exc()
+    start_time = time.time()
+    findings = []
 
-        elapsed = time.time() - start_time
-
-        if findings:
-            color_print(f"\n{'='*60}", "header")
-            color_print(f"SCAN COMPLETE - {len(findings)} XSS vulnerabilities found", "critical")
-            color_print(f"Time taken: {elapsed:.2f} seconds", "info")
-            color_print(f"{'='*60}", "header")
-        else:
-            color_print(f"\nScan completed in {elapsed:.2f} seconds. No XSS vulnerabilities detected.", "info")
-
-        if args.output and findings:
-            ext = os.path.splitext(args.output)[1].lower()
-            format_map = {'.json': 'json', '.html': 'html', '.txt': 'txt'}
-            fmt = format_map.get(ext, 'json')
-            try:
-                save_report(findings, args.output, fmt)
-                color_print(f"Report saved to {args.output} (format: {fmt})", "success")
-            except Exception as e:
-                color_print(f"Failed to save report: {e}", "error")
-
+    try:
+        for index, url in enumerate(iter_targets(args), start=1):
+            color_print(f"Scanning [{index}]: {url}", "info", quiet=args.quiet)
+            findings.extend(scan_url(url, payloads, args))
     except KeyboardInterrupt:
-        color_print("\nScan interrupted by user", "warning")
-        sys.exit(130)
-    except Exception as e:
-        color_print(f"Fatal error: {str(e)}", "error")
+        color_print("Scan interrupted by user", "warning")
+        raise SystemExit(130)
+    except Exception as exc:
         if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+            logging.exception("Fatal scanning error")
+        color_print(f"Fatal error: {exc}", "error")
+        raise SystemExit(1)
+
+    elapsed = time.time() - start_time
+    unique_findings = deduplicate_findings(findings)
+
+    if unique_findings:
+        color_print(f"Scan complete: {len(unique_findings)} findings in {elapsed:.2f}s", "critical")
+    else:
+        color_print(f"Scan complete: no findings in {elapsed:.2f}s", "info", quiet=args.quiet)
+
+    try:
+        save_if_requested(args, unique_findings)
+    except Exception as exc:
+        color_print(f"Failed to save report: {exc}", "error")
+
+
+def deduplicate_findings(findings):
+    seen = set()
+    unique = []
+    for finding in findings:
+        key = (
+            finding.get("url"),
+            finding.get("parameter"),
+            finding.get("payload"),
+            finding.get("type"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    return unique
+
 
 if __name__ == "__main__":
     main()

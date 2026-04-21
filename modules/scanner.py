@@ -1,163 +1,140 @@
 #!/usr/bin/env python3
-# XSShunter - Advanced XSS Exploitation Framework
-# Copyright (C) 2026  3rabDev
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import urllib.parse
-import re
 import concurrent.futures
+import html
 import logging
-from colorama import Fore
-from modules.utils import get_session, detect_waf
+import re
+import threading
+import urllib.parse
+
 from modules.dom_analyzer import analyze_dom
+from modules.headless import verify_xss
+from modules.utils import color_print, detect_waf, get_session, parse_data, random_delay
 
 logger = logging.getLogger(__name__)
 
-def scan_url(url, payloads, args):
-    """Scan a URL for XSS vulnerabilities using provided payloads."""
-    findings = []
-    try:
-        session = get_session(args.cookie)
-    except Exception as e:
-        print(f"{Fore.RED}[-] Failed to create session: {str(e)[:80]}")
-        return findings
-        
+
+def detect_context(text, payload):
+    escaped = re.escape(payload)
+    if re.search(rf"<script[^>]*>[^<]*{escaped}", text, re.IGNORECASE):
+        return "script block"
+    if re.search(rf"on\w+\s*=\s*[\"'][^\"']*{escaped}", text, re.IGNORECASE):
+        return "event handler"
+    if re.search(rf"<[^>]+\s\w+[^\n>]*{escaped}[^\n>]*>", text, re.IGNORECASE):
+        return "attribute"
+    if re.search(rf"javascript:[^\"'\s>]*{escaped}", text, re.IGNORECASE):
+        return "javascript uri"
+    return "reflection"
+
+
+def build_query_urls(url, payload):
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-    post_data = args.data if hasattr(args, 'data') and args.data else None
+    for parameter in params:
+        candidate = {key: list(values) for key, values in params.items()}
+        candidate[parameter] = [payload]
+        query = urllib.parse.urlencode(candidate, doseq=True)
+        request_url = urllib.parse.urlunparse(
+            (parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment)
+        )
+        yield parameter, request_url
 
-    has_params = bool(params) or ('=' in parsed.query)
-    
-    if not has_params and not post_data:
-        print(f"{Fore.YELLOW}[*] No parameters or POST data in {url}")
+
+def reflected(response_text, payload):
+    if payload in response_text:
+        return True
+    if html.escape(payload) in response_text:
+        return False
+    return False
+
+
+def scan_url(url, payloads, args):
+    findings = []
+    findings_lock = threading.Lock()
+    parsed = urllib.parse.urlparse(url)
+    session = get_session(
+        cookie=getattr(args, "cookie", None),
+        proxy=getattr(args, "proxy", None),
+        timeout=getattr(args, "timeout", 15),
+        headers=getattr(args, "headers", None),
+    )
+    post_data = parse_data(getattr(args, "data", None))
+    has_query_params = bool(urllib.parse.parse_qs(parsed.query, keep_blank_values=True)) or "=" in parsed.query
+
+    if not has_query_params and not post_data:
+        color_print(f"No injectable parameters found in {url}", "warning", quiet=getattr(args, "quiet", False))
         return findings
 
-    print(f"{Fore.BLUE}[*] Testing {url} with {len(payloads)} payloads")
-
-    if hasattr(args, 'waf') and args.waf:
+    if getattr(args, "waf", False):
         try:
-            resp = session.get(url, timeout=10)
-            waf = detect_waf(resp)
-            if waf:
-                print(f"{Fore.RED}[!] WAF detected: {waf}")
-        except Exception as e:
-            logger.debug(f"WAF detection failed: {e}")
+            baseline = session.get(url, timeout=args.timeout)
+            waf_name = detect_waf(baseline)
+            if waf_name:
+                color_print(f"WAF detected on {url}: {waf_name}", "warning", quiet=getattr(args, "quiet", False))
+        except Exception:
+            logger.debug("WAF detection failed for %s", url, exc_info=True)
 
-    if hasattr(args, 'dom') and args.dom:
+    if getattr(args, "dom", False):
         try:
-            dom_result = analyze_dom(url, session)
-            if dom_result:
-                print(f"{Fore.GREEN}[+] DOM XSS potential: {len(dom_result.get('findings', []))} findings")
-        except Exception as e:
-            logger.debug(f"DOM analysis failed: {e}")
+            dom_report = analyze_dom(url, session, headless=getattr(args, "headless", False))
+            for finding in dom_report.get("findings", []):
+                findings.append(finding)
+        except Exception:
+            logger.debug("DOM analysis failed for %s", url, exc_info=True)
 
-    def test_payload(param, payload, test_url=None, post_data_dict=None):
-        nonlocal findings
-        try:
-            if post_data_dict:
-                test_data = post_data_dict.copy()
-                if param in test_data:
-                    test_data[param] = payload
-                response = session.post(url, data=test_data, timeout=10)
-                response_text = response.text
-                request_url = url
-            else:
-                if not test_url:
-                    return
-                response = session.get(test_url, timeout=10)
-                response_text = response.text
-                request_url = test_url
-
-            if payload not in response_text:
-                return
-
-            if payload.replace('<', '&lt;') in response_text:
-                return
-
-            context = detect_context(response_text, payload)
-            finding = {
-                "url": url,
-                "parameter": param,
-                "payload": payload,
-                "context": context,
-                "evidence": response_text[:500],
-                "type": "Reflected XSS" if not post_data_dict else "POST XSS",
-                "request_url": request_url
-            }
+    def record_finding(parameter, payload, request_url, response_text, finding_type):
+        finding = {
+            "url": url,
+            "parameter": parameter,
+            "payload": payload,
+            "context": detect_context(response_text, payload),
+            "type": finding_type,
+            "request_url": request_url,
+            "verified": False,
+        }
+        if getattr(args, "headless", False):
+            finding["verified"] = verify_xss(request_url, payload, timeout=min(args.timeout, 10))
+        with findings_lock:
             findings.append(finding)
-            print(f"{Fore.RED}[!] XSS Found! {url} - Parameter: {param} [{context}]")
-            print(f"{Fore.YELLOW}    Payload: {payload[:80]}")
+        color_print(
+            f"Possible XSS found: {url} | param={parameter} | type={finding_type}",
+            "critical",
+            quiet=getattr(args, "quiet", False) and not finding["verified"],
+        )
 
-            if hasattr(args, 'headless') and args.headless:
-                try:
-                    from modules.headless import verify_xss
-                    if verify_xss(request_url, payload):
-                        print(f"{Fore.GREEN}[✓] Verified with headless browser")
-                except Exception as e:
-                    logger.debug(f"Headless verification failed: {e}")
+    def test_get(parameter, request_url, payload):
+        try:
+            random_delay(0.0, getattr(args, "delay", 0.1))
+            response = session.get(request_url, timeout=args.timeout, allow_redirects=True)
+            if reflected(response.text, payload):
+                record_finding(parameter, payload, request_url, response.text, "Reflected XSS")
+        except Exception:
+            logger.debug("GET test failed for %s", request_url, exc_info=True)
 
-            if hasattr(args, 'blind') and args.blind:
-                print(f"{Fore.CYAN}[*] Blind XSS payload sent (check callback)")
+    def test_post(parameter, payload):
+        try:
+            random_delay(0.0, getattr(args, "delay", 0.1))
+            body = dict(post_data)
+            body[parameter] = payload
+            response = session.post(url, data=body, timeout=args.timeout, allow_redirects=True)
+            if reflected(response.text, payload):
+                record_finding(parameter, payload, url, response.text, "POST XSS")
+        except Exception:
+            logger.debug("POST test failed for %s", url, exc_info=True)
 
-        except Exception as e:
-            logger.debug(f"Error testing payload on {param}: {str(e)[:50]}")
-
-    def detect_context(text, payload):
-        escaped = re.escape(payload)
-        if re.search(f'<script[^>]*>{escaped}', text, re.IGNORECASE):
-            return 'script block'
-        elif re.search(f'on\\w+\\s*=\\s*["\']?[^"\']*{escaped}', text, re.IGNORECASE):
-            return 'event handler'
-        elif re.search(f'href\\s*=\\s*["\']?javascript:{escaped}', text, re.IGNORECASE):
-            return 'javascript uri'
-        elif re.search(f'<\\w+[^>]*{escaped}[^>]*>', text, re.IGNORECASE):
-            return 'tag attribute'
-        else:
-            return 'plain text'
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(args, 'threads', 10)) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(args, "threads", 10)) as executor:
         futures = []
         if post_data:
-            try:
-                import json
-                post_dict = json.loads(post_data)
-            except (json.JSONDecodeError, ValueError):
-                try:
-                    post_dict = dict(x.split('=', 1) for x in post_data.split('&') if '=' in x)
-                except Exception as e:
-                    logger.error(f"Failed to parse POST data: {e}")
-                    return findings
-            for param in post_dict.keys():
+            for parameter in post_data:
                 for payload in payloads:
-                    futures.append(executor.submit(test_payload, param, payload, None, post_dict))
+                    futures.append(executor.submit(test_post, parameter, payload))
         else:
-            for param in params.keys():
-                for payload in payloads:
-                    new_params = params.copy()
-                    new_params[param] = [payload]
-                    new_query = urllib.parse.urlencode(new_params, doseq=True)
-                    test_url = urllib.parse.urlunparse((
-                        parsed.scheme, parsed.netloc, parsed.path,
-                        parsed.params, new_query, parsed.fragment
-                    ))
-                    futures.append(executor.submit(test_payload, param, payload, test_url, None))
-
+            for payload in payloads:
+                for parameter, request_url in build_query_urls(url, payload):
+                    futures.append(executor.submit(test_get, parameter, request_url, payload))
         for future in concurrent.futures.as_completed(futures):
             try:
                 future.result()
-            except Exception as e:
-                logger.debug(f"Executor error: {e}")
-
+            except Exception:
+                logger.debug("Scanner worker failure", exc_info=True)
     return findings
